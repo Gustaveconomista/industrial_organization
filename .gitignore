@@ -49,5 +49,5 @@ po/*~
 rsconnect/
 
 #  Ignore raw data sets, they are too large
-/Data/
-Data/
+/data/
+data/
