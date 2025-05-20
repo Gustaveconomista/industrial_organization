@@ -2,19 +2,16 @@
 title: "Lista 1 - Organização Industrial I"
 author: "Gustavo Henrique"
 date: '`r Sys.Date()`'
-output: html_document
+output: pdf_document
+encoding: UTF-8
 ---
 
 ## Carregando/Instalando pacotes necessários
 ```{r}
 pacman::p_load(tidyverse,
-               estimatr,
-               stats,
                stargazer,
-               haven,
                here,
-               patchwork,
-               readxl)
+               AER)
 ```
 
 ## Importando a base de dados
@@ -23,7 +20,34 @@ data = read.table(here("data", "data.txt"), header = TRUE, sep = ",")
 ```
 
 ## Parte I: Demanda logit
-### Questão 1
 ```{r}
+## Limpando a base
+data = data %>% 
+  # Gerando dummies para cada firma
+  mutate(j1 = case_when(
+    j == 1 ~ 1,
+    T ~ 0
+  ),
+  j2 = case_when(
+    j == 2 ~ 1,
+    T ~ 0
+  )) %>% 
+  group_by(t) %>%
+  # Gerando variável da % de consumidores que escolhem a "outside option"
+  mutate(ms0 = 1 - sum(ms)) %>%
+  group_by(r, j) %>%
+  # Gerando o instrumento (média dos preços da firma em outras cidades da mesma região)
+  mutate(price_iv = (sum(price) - price) / (n() - 1)) %>% 
+  # Gerando o componente fixo da utilidade
+  mutate(delta = log(ms)-log(ms0))
 
+## Estimação
+# OLS
+ols_reg = ivreg(delta ~ j1 + j2 + channels + channels_spec + price - 1, data=data)
+
+# IV
+iv_reg = ivreg(delta ~ j1 + j2 + channels + channels_spec + price - 1 | j1 + j2 + channels + channels_spec + price_iv - 1, data=data)
+
+## Visualização dos resultados
+suppressWarnings(stargazer(ols_reg, iv_reg, type = 'text'))
 ```
