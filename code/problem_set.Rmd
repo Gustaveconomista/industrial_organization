@@ -23,7 +23,7 @@ data = read.table(here("data", "data.txt"), header = TRUE, sep = ",")
 # Parte I: Demanda logit
 Considerando $s_{jt}$ como a participação de mercado da firma $j$ no mercado $t$ e $s_{0t}$ como a participação da opção externa, o componente fixo de utilidade é modelado por:
 
-$$log(s_{jt})-log(s_{0t})=\delta_{jt}=\beta_{0j}+\beta_{1}x^{conv}_{jt}+\beta_{2}x^{spec}_{jt}-\alpha p_{jt}+\xi_{jt}$$
+$$\delta_{jt}=log(s_{jt})-log(s_{0t})=\beta_{0j}+\beta_{1}x^{conv}_{jt}+\beta_{2}x^{spec}_{jt}-\alpha p_{jt}+\xi_{jt}$$
 
 onde $x_{jt}^{conv}$ e $x_{jt}^{spec}$ são características do produto (canais convencionais e especiais), $p_{jt}$ é o preço e $\xi_{jt}$ representa choques não observados.
 
@@ -36,9 +36,9 @@ Para lidar com a endogeneidade dos preços, foram utilizados:
 
 As hipóteses para validade do instrumento são:
 
-- *Relevância*: custos regionais são correlacionados entre cidades da mesma região;
+- *Relevância*: Custos regionais são correlacionados entre cidades da mesma região;
 
-- *Exclusão*: choques específicos de custo e demanda não são correlacionados entre cidades, após controlar pelos preços.
+- *Exclusão*: Choques específicos de custo e demanda não são correlacionados entre cidades, após controlar pelos preços.
 
 ## Programação
 Abaixo segue código para geração dos resultados:
@@ -76,3 +76,120 @@ suppressWarnings(stargazer(ols_reg, iv_reg, type = 'text'))
 
 ## Interpretação dos resultados
 Como podemos ver na tabela acima, temos $\hat{\alpha}_{OLS}=0.046<0.053=\hat{\alpha}_{IV}$, ou seja, a estimação via OLS subestima o efeito do preço. Podemos interpretar este resultado como evidência de que parte da variação em $\delta$ é explicada por fatores regionais não observáveis, de modo que o instrumento de Hausman corrige esse viés.
+
+# Parte II: Demanda Logit com coeficientes aleatórios
+Para capturar heterogeneidade dos consumidores, ampliamos o modelo com coeficientes aleatórios. Além do instrumento de Hausman, incluímos como instrumentos o número de canais convencionais e especiais oferecidos pela firma rival na mesma cidade.
+
+## Cálculo do Market Share
+Dado um vetor de componentes fixos $\delta$, o market share esperado da firma $j$ na cidade $t$ é:
+
+$$s_{jt}(\sigma, \delta)=\int \frac{exp(\delta_{jt}+\sigma \eta_{it}p_{jt})}{1+exp(\delta_{1t}+\sigma \eta_{it}p_{1t})+exp(\delta_{2t}+\sigma \eta_{it}p_{2t})}dF_{\eta_{it}}$$
+
+Na prática, aproximamos a integral por simulação com $H_s = 100$ sorteios de $\eta$ para cada cidade:
+
+$$\tilde{s}_{jt}(\sigma, \delta)=\frac{1}{H_s}\sum_{i=1}^{H_s} \frac{exp(\delta_{jt}+\sigma \eta_{it}p_{jt})}{1+exp(\delta_{1t}+\sigma \eta_{it}p_{1t})+exp(\delta_{2t}+\sigma \eta_{it}p_{2t})}$$
+
+## Estimação via GMM
+A estimação dos parâmetros é feita via GMM, minimizando:
+
+$$J(\beta, \sigma)=(\delta(\sigma)-X\beta)'Z(Z'Z)^{-1}Z'(\delta(\sigma)-X\beta)$$
+
+onde, para cada $\sigma$, calculamos:
+
+$$\beta(\delta(\sigma))=(X'Z(Z'Z)^{-1}Z'X)^{-1}X'Z(Z'Z)^{-1}Z'\delta(\sigma)$$
+
+## Programação
+Abaixo segue código para geração dos resultados:
+```{r}
+# Construindo os novos instrumentos
+data = data %>%
+  group_by(t)%>%
+  # Instrumento de canais convencionais
+  mutate(channels_iv = case_when(
+    j == 1 ~ channels[j == 2],
+    T ~ channels[j == 1]
+  ),
+  # Instrumento de canais especiais
+  channels_spec_iv = case_when(
+    j == 1 ~ channels_spec[j == 2],
+    T ~ channels_spec[j == 1]
+    ))
+
+# Gerando a matriz X
+X = as.matrix(data[,c("j1", "j2", "channels", "channels_spec", "price")])
+
+# Gerando a matriz de instrumentos
+Z = as.matrix(data[,c("j1", "j2", "channels", "channels_spec", "price_iv", "channels_iv", "channels_spec_iv")])
+
+
+# Extraindo uma amostra de 100 indivíduos por cidade
+set.seed(11)
+n = length(unique(data$t))
+ind = 100
+eta = rnorm(n*ind)
+eta = array(rep(eta,each=2),c(n*2,ind))
+
+# Criando uma função para estimação da integral
+integral_f = function(i,sigma,delta){
+  # Encontrando linha da firma 1
+  j = i - 1*(i%%2 == 0)
+  # Gerando a lista
+  lista = exp(delta[i] + sigma*data$price[i]*eta[i,])/(1 + exp(delta[j] + sigma*data$price[j]*eta[j,]) + exp(delta[j+1] + sigma*data$price[j+1]*eta[j+1,]))
+  # Retornando a média
+  return(mean(lista))
+}
+
+# Criando uma função que atualiza o delta, dado o sigma
+delta_f = function(sigma){
+  delta_old = rep(1,n*2)
+  delta = rep(0,n*2)
+  iter = 0
+  maxiter = 10000
+  while (max(abs(delta-delta_old)) > 1e-10) {
+    iter = iter+1
+    delta_old = delta
+    # estimando a integral em cada linha
+    integ = sapply(1:(n*2),function(i){integral_f(i,sigma,delta)})
+    # atualizando o delta
+    delta = delta + log(data$ms) - log(integ)
+  } 
+  return(delta)
+}
+
+# Criando uma função linear que retorna (beta_{0,1}, beta_{0,2}, beta_1, beta_2, -alpha)
+coef_f = function(delta){
+  return(solve(t(X) %*% Z %*% solve(t(Z) %*% Z) %*% t(Z) %*% X) %*% t(X) %*% Z %*% solve(t(Z) %*% Z) %*% t(Z) %*% delta)}
+
+# Criando uma função gmm para dado sigma
+gmm_f = function(sigma){
+  delta = delta_f(sigma)
+  return(t(delta - X %*% coef_f(delta)) %*% Z %*% solve(t(Z) %*% Z) %*% t(Z) %*% (delta - X %*% coef_f(delta)))
+}
+
+# Aplicando a função gmm no grid de sigma
+gmm_grid = sapply(seq(0, 0.2, length.out = 40), gmm_f)
+
+# Calculando o sigma
+sigma_hat = seq(0, 0.2, length.out = 40)[which.min(gmm_grid)]
+
+# Calculando os coeficientes
+coef_hat = coef_f(delta_f(sigma_hat))
+
+# Imprimindo o valor do sigma estimado
+sigma_hat
+
+# Imprimindo o valor dos coeficientes
+coef_hat
+```
+## Resultados
+Dos resultados acima, temos que o valor ótimo encontrado para $\sigma$ foi $\hat{\sigma}=0.066$, com estimativas finais:
+
+- $\hat{\beta}_{01} = 2.050$
+
+- $\hat{\beta}_{02} = 1.622$
+
+- $\hat{\beta}_1 = 0.023$
+
+- $\hat{\beta}_2 = 0.199$
+
+- $\hat{\alpha} = 0.121$
