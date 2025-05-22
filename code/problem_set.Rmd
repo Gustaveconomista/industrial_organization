@@ -6,20 +6,42 @@ output: pdf_document
 encoding: UTF-8
 ---
 
-## Carregando/Instalando pacotes necessários
-```{r}
+```{r, echo=FALSE}
+## Instalando/Carregando pacotes necessários
 pacman::p_load(tidyverse,
                stargazer,
                here,
-               AER)
+               AER,
+               rmarkdown)
 ```
 
+```{r, echo=FALSE}
 ## Importando a base de dados
-```{r}
 data = read.table(here("data", "data.txt"), header = TRUE, sep = ",")
 ```
 
-## Parte I: Demanda logit
+# Parte I: Demanda logit
+Considerando $s_{jt}$ como a participação de mercado da firma $j$ no mercado $t$ e $s_{0t}$ como a participação da opção externa, o componente fixo de utilidade é modelado por:
+
+$$log(s_{jt})-log(s_{0t})=\delta_{jt}=\beta_{0j}+\beta_{1}x^{conv}_{jt}+\beta_{2}x^{spec}_{jt}-\alpha p_{jt}+\xi_{jt}$$
+
+onde $x_{jt}^{conv}$ e $x_{jt}^{spec}$ são características do produto (canais convencionais e especiais), $p_{jt}$ é o preço e $\xi_{jt}$ representa choques não observados.
+
+## Estratégia de Identificação
+Para lidar com a endogeneidade dos preços, foram utilizados:
+
+* Variáveis exógenas do modelo;
+
+* **Instrumento de Hausman**: Média dos preços praticados pela firma em outras cidades da mesma região.
+
+As hipóteses para validade do instrumento são:
+
+- *Relevância*: custos regionais são correlacionados entre cidades da mesma região;
+
+- *Exclusão*: choques específicos de custo e demanda não são correlacionados entre cidades, após controlar pelos preços.
+
+## Programação
+Abaixo segue código para geração dos resultados:
 ```{r}
 ## Limpando a base
 data = data %>% 
@@ -51,3 +73,6 @@ iv_reg = ivreg(delta ~ j1 + j2 + channels + channels_spec + price - 1 | j1 + j2 
 ## Visualização dos resultados
 suppressWarnings(stargazer(ols_reg, iv_reg, type = 'text'))
 ```
+
+## Interpretação dos resultados
+Como podemos ver na tabela acima, temos $\hat{\alpha}_{OLS}=0.046<0.053=\hat{\alpha}_{IV}$, ou seja, a estimação via OLS subestima o efeito do preço. Podemos interpretar este resultado como evidência de que parte da variação em $\delta$ é explicada por fatores regionais não observáveis, de modo que o instrumento de Hausman corrige esse viés.
