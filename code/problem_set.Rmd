@@ -61,14 +61,14 @@ data = data %>%
   # Gerando o instrumento (média dos preços da firma em outras cidades da mesma região)
   mutate(price_iv = (sum(price) - price) / (n() - 1)) %>% 
   # Gerando o componente fixo da utilidade
-  mutate(delta = log(ms)-log(ms0))
+  mutate(delta_jt = log(ms)-log(ms0))
 
 ## Estimação
 # OLS
-ols_reg = ivreg(delta ~ j1 + j2 + channels + channels_spec + price - 1, data=data)
+ols_reg = ivreg(delta_jt ~ j1 + j2 + channels + channels_spec + price - 1, data=data)
 
 # IV
-iv_reg = ivreg(delta ~ j1 + j2 + channels + channels_spec + price - 1 | j1 + j2 + channels + channels_spec + price_iv - 1, data=data)
+iv_reg = ivreg(delta_jt ~ j1 + j2 + channels + channels_spec + price - 1 | j1 + j2 + channels + channels_spec + price_iv - 1, data=data)
 
 ## Visualização dos resultados
 suppressWarnings(stargazer(ols_reg, iv_reg, type = 'text'))
@@ -83,7 +83,7 @@ Para capturar heterogeneidade dos consumidores, ampliamos o modelo com coeficien
 ## Cálculo do Market Share
 Dado um vetor de componentes fixos $\delta$, o market share esperado da firma $j$ na cidade $t$ é:
 
-$$s_{jt}(\sigma, \delta)=\int \frac{exp(\delta_{jt}+\sigma \eta_{it}p_{jt})}{1+exp(\delta_{1t}+\sigma \eta_{it}p_{1t})+exp(\delta_{2t}+\sigma \eta_{it}p_{2t})}dF_{\eta_{it}}$$
+$$s_{jt}(\sigma, \delta)=\int f(\delta_{jt}, \delta_{(-j)t}, \eta_{it})dF_{, \eta_{it}}=\int \frac{exp(\delta_{jt}+\sigma \eta_{it}p_{jt})}{1+exp(\delta_{1t}+\sigma \eta_{it}p_{1t})+exp(\delta_{2t}+\sigma \eta_{it}p_{2t})}dF_{\eta_{it}}$$
 
 Na prática, aproximamos a integral por simulação com $H_s = 100$ sorteios de $\eta$ para cada cidade:
 
@@ -181,15 +181,137 @@ sigma_hat
 # Imprimindo o valor dos coeficientes
 coef_hat
 ```
+
 ## Resultados
-Dos resultados acima, temos que o valor ótimo encontrado para $\sigma$ foi $\hat{\sigma}=0.066$, com estimativas finais:
+Dos resultados acima, temos que o valor ótimo encontrado para $\sigma$ foi $\hat{\sigma}=0.067$, com estimativas finais:
 
-- $\hat{\beta}_{01} = 2.050$
+- $\hat{\beta}_{01} = 1.97$
 
-- $\hat{\beta}_{02} = 1.622$
+- $\hat{\beta}_{02} = 1.54$
 
-- $\hat{\beta}_1 = 0.023$
+- $\hat{\beta}_1 = 0.02$
 
-- $\hat{\beta}_2 = 0.199$
+- $\hat{\beta}_2 = 0.19$
 
-- $\hat{\alpha} = 0.121$
+- $\hat{\alpha} = 0.12$
+
+# Parte III: Contrafactuais
+## Estrutura de Precificação e Equilíbrio
+Os preços de equilíbrio são obtidos por:
+
+$$p=c-\left(\frac{\partial s_j}{\partial p_{j'}}\odot M\right)^{-1}s(p)$$
+
+No cenário competitivo ($M = I_2$) e considerando o valor de $s_{jt}$ apresentado no item anterior, as CPO's são:
+
+$$\frac{\partial s_j}{\partial p_{j}}=\int f(\delta_j, \delta_{-j}, \eta_i)[1-f(\delta_j, \delta_{-j}, \eta_i)](\sigma\eta_i-\alpha)dF_{\eta_i}$$
+
+$$\frac{\partial s_j}{\partial p_{j'}}=-\int f(\delta_j, \delta_{-j}, \eta_i)f(\delta_{j'}, \delta_{-j'}, \eta_i)(\sigma\eta_i-\alpha)dF_{\eta_i}$$
+
+## Programação
+Abaixo segue código para geração dos resultados:
+```{r}
+# Extraindo uma amostra de 100 indivíduos na cidade representativa
+set.seed(124)
+eta2 = rnorm(100)
+
+# Criando uma função p/ cálculo do market share
+share_f = function(channel, channel_spec, price){
+  
+  # Calculando o delta
+  delta = cbind(c(1,0), c(0,1), channel, channel_spec, price) %*% coef_hat
+  
+  # Criando uma função auxiliar para market share e gradiente
+  aux_f = function(j){
+    return(exp(delta[j] + sigma_hat * price[j] * eta2)/(1 + exp(delta[1] + sigma_hat * price[1] * eta2) + exp(delta[2] + sigma_hat * price[2] * eta2)))
+  }
+  
+  # Calculando o market share
+  share = c(mean(aux_f(1)), mean(aux_f(2)))
+  return(share)
+}
+
+# Criando uma função p/ cálculo do eta da oferta
+eta_f = function(M, channel, channel_spec, price){
+  
+  # Calculando o delta
+  delta = cbind(c(1,0), c(0,1), channel, channel_spec, price) %*% coef_hat
+  
+  # Criando uma função auxiliar para market share e gradiente
+  aux_f = function(j){
+    return(exp(delta[j] + sigma_hat * price[j] * eta2)/(1 + exp(delta[1] + sigma_hat * price[1] * eta2) + exp(delta[2] + sigma_hat * price[2] * eta2)))
+  }
+  
+  # Calculando o market share
+  share = c(mean(aux_f(1)), mean(aux_f(2)))
+  
+  # Calculando os s
+  s11 = mean((sigma_hat * eta2 + coef_hat[5]) * aux_f(1)*(1-aux_f(1)))
+  s22 = mean((sigma_hat * eta2 + coef_hat[5]) * aux_f(2)*(1-aux_f(2)))
+  s21 = -mean((sigma_hat * eta2 + coef_hat[5]) * aux_f(1) * aux_f(2))
+  
+  # Calculando s(.)M
+  sM = M 
+  sM[1,1] = s11*sM[1,1]
+  sM[2,2] = s22*sM[2,2]
+  sM[2,1] = s21*sM[2,1]
+  sM[1,2] = sM[2,1]
+  
+  # Calculando o eta
+  etaM = -solve(sM) %*% share
+  return(etaM)
+}
+
+# Criando uma função p/ cálculo dos preços
+price_f = function(M, channel, channel_spec){
+  price_old = c(0,0)
+  price = cm
+  iter2 = 0
+  maxiter2 = 2000
+  while((max(abs(price-price_old)) > 1e-5) && (iter2 < maxiter2)){
+    price_old = price
+    price = cm + eta_f(M, channel, channel_spec, price)
+    iter2 = iter2 + 1
+  }
+  return(price)
+}
+
+# Definindo as características
+cm = c(30,30)
+x_conv = c(40,40)
+x_espc = c(3,3)
+
+# Definindo a estrutura do mercado
+M = diag(2)
+
+# Calculando os preços e o market share
+price_f(M, x_conv, x_espc)
+share_f(x_conv, x_espc, price_f(M, x_conv, x_espc))
+
+# Realizando a fusão
+M = matrix(c(1,1,1,1), ncol = 2)
+
+# Calculando os preços e o market share
+price_f(M, x_conv, x_espc)
+share_f(x_conv, x_espc, price_f(M, x_conv, x_espc))
+```
+
+## Resultados Contrafactuais
+No cenário competitivo temos:
+
+- Preço da firma 1: $p_1 = 57.43$
+
+- Preço da firma 2: $p_2 = 52.94$
+
+- Market share da firma 1: $ms_1 = 0.1338$
+
+- Market share da firma 2: $ms_2 = 0.1102$
+
+Já no cenário pós-fusão temos:
+
+- Preço: $p_1 = p_2 = 82.57$
+
+- Market share da firma 1: $ms_1 = 0.0801$
+
+- Market share da firma 2: $ms_2 = 0.0521$
+
+Após a fusão, observa-se aumento expressivo nos preços e redução da soma dos market shares, indicando que mais consumidores optam pela alternativa externa diante do encarecimento dos produtos.
