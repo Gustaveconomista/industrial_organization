@@ -123,7 +123,7 @@ Z = as.matrix(data[,c("j1", "j2", "channels", "channels_spec", "price_iv", "chan
 
 
 # Extraindo uma amostra de 100 indivíduos por cidade
-set.seed(11)
+set.seed(11) # Definindo 'seed' para replicabilidade
 n = length(unique(data$t))
 ind = 100
 eta = rnorm(n*ind)
@@ -211,7 +211,7 @@ $$\frac{\partial s_j}{\partial p_{j'}}=-\int f(\delta_j, \delta_{-j}, \eta_i)f(\
 Abaixo segue código para geração dos resultados:
 ```{r}
 # Extraindo uma amostra de 100 indivíduos na cidade representativa
-set.seed(124)
+set.seed(124) # Definindo 'seed' para replicabilidade
 eta2 = rnorm(100)
 
 # Criando uma função p/ cálculo do market share
@@ -275,22 +275,22 @@ price_f = function(M, channel, channel_spec){
   return(price)
 }
 
-# Definindo as características
-cm = c(30,30)
-x_conv = c(40,40)
-x_espc = c(3,3)
+# Definindo as características do mercado
+cm = c(30,30) # Custo marginal das firmas
+x_conv = c(40,40) # Quantidade de canais convencionais
+x_espc = c(3,3) # Quantidade de canais especiais
 
 # Definindo a estrutura do mercado
 M = diag(2)
 
-# Calculando os preços e o market share
+# Calculando os preços e o market share na estrutura competitiva
 price_f(M, x_conv, x_espc)
 share_f(x_conv, x_espc, price_f(M, x_conv, x_espc))
 
 # Realizando a fusão
 M = matrix(c(1,1,1,1), ncol = 2)
 
-# Calculando os preços e o market share
+# Calculando os preços e o market share após a fusão
 price_f(M, x_conv, x_espc)
 share_f(x_conv, x_espc, price_f(M, x_conv, x_espc))
 ```
